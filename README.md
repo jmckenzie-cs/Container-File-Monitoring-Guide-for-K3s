@@ -1,462 +1,222 @@
-# Container File Monitoring Guide for K3s
+# K3s Container File Monitoring - Required Paths Only
 
-This guide provides instructions for monitoring files inside Docker containers running on K3s hosts for File Integrity Monitoring (FIM) purposes. The **recommended approach is host-based monitoring** for security and centralization benefits.
+## Required Monitoring Paths
 
-## FIM Monitoring Priority Levels for K3s Containers
+Monitor these two critical paths for security compliance:
 
-For effective File Integrity Monitoring, prioritize monitoring targets based on security impact and threat detection value.
-
-### 🔴 REQUIRED - Critical Security Monitoring
-
-These paths are **essential** for detecting security incidents and must be monitored:
-
-**Container Overlay Filesystems (Application Files):**
+### 1. Container Live Filesystems
 ```bash
-# Primary target: Container's live filesystem (TEMPLATE)
 /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/<snapshot-id>/fs
-
-# ACTUAL EXAMPLES (replace <snapshot-id> with real values):
-/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/abc123def456789/fs
-/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/1a2b3c4d5e6f/fs
-/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/nginx-prod-67890/fs
 ```
-
-**Why Required:**
 - Contains all executable files and application code
-- Detects malware injection, backdoors, and unauthorized modifications
-- Shows real-time changes to running applications
-- Critical for compliance and incident response
-- **Note:** You must use the [snapshot ID discovery methods](#how-to-get-snapshot-ids) below to get actual snapshot IDs for your running containers
+- Detects malware injection and unauthorized modifications
+- **⚠️ Changes on restart** - requires dynamic discovery
 
-**K3s System Configuration:**
-```
-/etc/rancher/k3s/                       # Cluster configuration
-```
-
-**Why Required:**
-- Controls cluster security policies
-- Unauthorized changes can compromise entire cluster
-- Required for regulatory compliance
-
-### 🟡 RECOMMENDED - Enhanced Security Coverage
-
-These paths provide **important additional security visibility**:
-
-**Container Runtime Configuration:**
-```
-/var/lib/rancher/k3s/agent/containerd/  # Container runtime settings
-```
-
-**Why Recommended:**
-- Detects container escape attempts
-- Monitors runtime security configurations
-- Identifies privilege escalation attempts
-
-**Persistent Volumes (Application Data):**
-```
-/var/lib/rancher/k3s/storage/           # K3s local storage
-/var/lib/kubelet/pods/                  # Pod volumes
-```
-
-**Why Recommended:**
-- Persistent data survives container restarts
-- Contains application databases and user data
-- Detects data tampering and unauthorized access
-
-**Container Logs (Runtime Activity):**
-```
-/var/log/pods/<namespace>_<pod-name>_<pod-uid>/
-/var/lib/rancher/k3s/agent/containerd/io.containerd.grpc.v1.cri/containers/
-```
-
-**Why Recommended:**
-- **Note:** Container logs are NOT in the overlay filesystem
-- Provides activity correlation and forensic evidence
-- Detects suspicious runtime behavior
-- Required for complete audit trails
-
-### 🟢 OPTIONAL - Comprehensive Coverage
-
-These paths provide **additional operational insights**:
-
-**K3s Agent Data:**
-```
-/var/lib/rancher/k3s/agent/             # Agent state and cache
-```
-
-**Why Optional:**
-- Primarily operational data
-- Lower security impact
-- Useful for troubleshooting cluster issues
-
-**Container Root Directories:**
-```
-/var/lib/rancher/k3s/agent/containerd/io.containerd.grpc.v1.cri/sandboxes/
-```
-
-**Why Optional:**
-- Container metadata and sandbox information
-- Less critical for security monitoring
-- Useful for forensic analysis
-
-### Implementation Priority
-
-**Start with Required paths** for immediate security coverage, then add Recommended paths for comprehensive monitoring. Add Optional paths only if you have sufficient monitoring capacity and need detailed operational visibility.
-
-## Host-Based Container Monitoring (Recommended)
-
-### Understanding Container Overlay Filesystems
-
-**What is an Overlay Filesystem?**
-
-An **overlay filesystem** is a layered filesystem technology that Docker uses to create container images and running containers. It works by stacking multiple filesystem layers on top of each other.
-
-**How Container Layers Work:**
-```
-┌─────────────────────┐  ← Container Layer (writable)
-├─────────────────────┤  ← Application Layer (read-only)
-├─────────────────────┤  ← Dependencies Layer (read-only)
-├─────────────────────┤  ← OS Layer (read-only)
-└─────────────────────┘  ← Base Layer (read-only)
-```
-
-**The Overlay Components:**
-
-- **Lower Directories (LowerDir):** Read-only layers from the Docker image (base OS, dependencies, application code)
-- **Upper Directory (UpperDir):** Writable layer specific to each container (runtime changes)
-- **Work Directory (WorkDir):** Temporary space used by the overlay driver
-- **Merged Directory (MergedDir):** ⭐ **The unified view combining all layers - THIS IS WHAT YOU MONITOR**
-
-**Why Monitor the Merged Directory?**
-
-The merged directory contains:
-- ✅ All files from the original Docker image
-- ✅ All files created/modified by the running container
-- ✅ The exact filesystem view the container sees
-- ✅ Real-time changes as they happen
-
-**Practical Example:**
-
-If a container runs nginx, the merged directory shows:
+### 2. K3s System Configuration
 ```bash
-# Files from image layers (read-only):
-/usr/bin/nginx          # From nginx image
-/etc/nginx/nginx.conf   # From nginx image
-/var/log/nginx/         # From nginx image
-
-# Files from container layer (writable):
-/var/log/nginx/access.log   # Created at runtime
-/etc/nginx/custom.conf      # Added by application
-/tmp/nginx.pid             # Runtime process file
-```
-
-**Benefits for FIM Monitoring:**
-- **Complete visibility** - See all files the container can access
-- **Real-time changes** - Detect modifications as they happen
-- **Efficient storage** - Docker reuses image layers between containers
-- **Isolation** - Each container has its own writable layer
-- **Persistence tracking** - Know what changes survive container restarts
-
-### Container File Paths on K3s Host
-
-**Container filesystems (overlay) - PRIMARY MONITORING TARGET:**
-```
-/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/
-```
-
-**Container logs:**
-```
-/var/log/pods/
-/var/lib/rancher/k3s/agent/containerd/io.containerd.grpc.v1.cri/containers/
-```
-
-**Container root directories:**
-```
-/var/lib/rancher/k3s/agent/containerd/io.containerd.grpc.v1.cri/sandboxes/
-```
-
-### K3s-Specific Paths
-
-**K3s data directory:**
-```
-/var/lib/rancher/k3s/
-```
-
-**K3s configuration:**
-```
 /etc/rancher/k3s/
 ```
+- Controls cluster security policies
+- Prevents cluster compromise
+- **✅ Stable path** - can be hardcoded
 
-**Containerd socket:**
-```
-/run/k3s/containerd/containerd.sock
-```
+## Alternative Stable Paths (Hardcode-Friendly)
 
-### Finding Container Merged Filesystem (Live Files)
+If you prefer hardcoded paths that don't change on container restart, monitor these instead:
 
-The container's merged filesystem contains all the live files as seen by the container:
-
+### 1. Persistent Volumes (Recommended Alternative)
 ```bash
-# Get container ID
-CONTAINER_ID=$(crictl ps --name <container-name> -q)
+# K3s local storage (stable across restarts)
+/var/lib/rancher/k3s/storage/
 
-# Get merged filesystem path (Method 1)
-MERGED_PATH=$(crictl inspect $CONTAINER_ID | jq -r '.info.runtimeSpec.mounts[] | select(.destination == "/") | .source')
-
-# Alternative method (Method 2)
-crictl inspect $CONTAINER_ID | grep -A1 -B1 "MergedDir"
+# Pod volumes (stable within pod lifecycle)
+/var/lib/kubelet/pods/<pod-uid>/volumes/
 ```
+**Benefits:**
+- ✅ Paths don't change on container restart
+- ✅ Contains persistent application data
+- ✅ Survives container crashes and restarts
+- ⚠️ Pod UID changes if pod is deleted and recreated
 
-**Typical merged path format:**
-```
-/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/<snapshot-id>/fs
-```
-
-### How to Get Snapshot IDs
-
-The `<snapshot-id>` is a unique identifier for each container's filesystem snapshot. Here are multiple methods to extract it:
-
-#### Method 1: Extract from Merged Path (Recommended)
+### 2. Host Bind Mounts (Most Stable)
 ```bash
-# Get container name/ID
-CONTAINER_NAME="nginx-app"
-CONTAINER_ID=$(crictl ps --name "$CONTAINER_NAME" -q)
+# If containers mount host directories, monitor the host paths directly
+/opt/app-data/          # Example: application data directory
+/var/app-logs/          # Example: application log directory
+/etc/app-config/        # Example: application configuration
+```
+**Benefits:**
+- ✅ Completely stable - never change
+- ✅ Easy to configure and maintain
+- ✅ Direct host filesystem access
+- ⚠️ Only works if applications use host bind mounts
 
-# Get full merged path
-MERGED_PATH=$(crictl inspect "$CONTAINER_ID" | jq -r '.info.runtimeSpec.mounts[] | select(.destination == "/") | .source')
+### 3. Container Runtime Directories (Moderately Stable)
+```bash
+# Container metadata and state (by container ID)
+/var/lib/rancher/k3s/agent/containerd/io.containerd.grpc.v1.cri/containers/<container-id>/
 
-# Extract just the snapshot ID
-SNAPSHOT_ID=$(basename "$(dirname "$MERGED_PATH")")
+# Pod sandbox directories (by pod sandbox ID)
+/var/lib/rancher/k3s/agent/containerd/io.containerd.grpc.v1.cri/sandboxes/<sandbox-id>/
+```
+**Benefits:**
+- ✅ More predictable than snapshot-id
+- ✅ Contains container configuration and metadata
+- ⚠️ Container ID still changes on restart, but less frequently than snapshot-id
 
-echo "Container: $CONTAINER_NAME"
-echo "Full path: $MERGED_PATH"
-echo "Snapshot ID: $SNAPSHOT_ID"
+## Finding Stable Paths
+
+### Get Pod UID for Volume Monitoring
+```bash
+# Get pod UID (stable within pod lifecycle)
+POD_NAME="your-pod-name"
+NAMESPACE="default"
+POD_UID=$(kubectl get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.uid}')
+
+echo "Monitor pod volumes: /var/lib/kubelet/pods/$POD_UID/volumes/"
 ```
 
-#### Method 2: Using Path Parsing
+### Discover Bind Mounts
 ```bash
-# Parse snapshot ID from full path using parameter expansion
-MERGED_PATH="/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/abc123def456/fs"
-SNAPSHOT_ID="${MERGED_PATH%/fs}"      # Remove /fs suffix
-SNAPSHOT_ID="${SNAPSHOT_ID##*/}"      # Get last part after final /
-
-echo "Snapshot ID: $SNAPSHOT_ID"
-```
-
-#### Method 3: Direct containerd Query
-```bash
-# List all snapshots with containerd
-ctr -n k8s.io snapshot ls
-
-# Find snapshot for specific container
-CONTAINER_ID=$(crictl ps --name nginx-app -q)
-ctr -n k8s.io snapshot ls | grep "$CONTAINER_ID"
-```
-
-#### Method 4: Filesystem Discovery
-```bash
-# List all snapshot directories
-ls -la /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/
-
-# Find snapshots modified recently (active containers)
-find /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/ -maxdepth 1 -type d -mmin -60
-```
-
-#### Method 5: Batch Discovery Script
-```bash
-#!/bin/bash
-# Get snapshot IDs for all running containers
-
-echo "Container Name | Container ID | Snapshot ID | Full Path"
-echo "============== | ============ | =========== | ========="
-
-# Loop through all running containers
+# Find host paths mounted into containers
 crictl ps --format table | tail -n +2 | while read line; do
     CONTAINER_ID=$(echo "$line" | awk '{print $1}')
     CONTAINER_NAME=$(echo "$line" | awk '{print $6}')
 
-    # Get merged path
+    echo "Container: $CONTAINER_NAME"
+    crictl inspect "$CONTAINER_ID" | jq -r '.info.runtimeSpec.mounts[] | select(.type == "bind") | "  Host: \(.source) -> Container: \(.destination)"'
+    echo
+done
+```
+
+### Check K3s Storage Usage
+```bash
+# List all persistent volume directories
+ls -la /var/lib/rancher/k3s/storage/
+
+# Find recently active storage
+find /var/lib/rancher/k3s/storage/ -type f -mtime -1 | head -10
+```
+
+## How to Get Snapshot IDs
+
+**IMPORTANT:** The `<snapshot-id>` **changes every time a container is restarted**. Each container restart creates a new snapshot with a new ID.
+
+### Implications for FIM Monitoring:
+- ❌ **Never hardcode snapshot-id paths** - they become invalid after restart
+- ✅ **Use dynamic discovery scripts** - automatically find current paths
+- ✅ **Update monitoring configuration** after container restarts
+- ✅ **Monitor container lifecycle events** to trigger path updates
+
+The `<snapshot-id>` is required to build the full monitoring path. Use these methods:
+
+### Method 1: Extract from Container (Recommended)
+```bash
+# Get container ID and snapshot path
+CONTAINER_NAME="your-container-name"
+CONTAINER_ID=$(crictl ps --name "$CONTAINER_NAME" -q)
+MERGED_PATH=$(crictl inspect "$CONTAINER_ID" | jq -r '.info.runtimeSpec.mounts[] | select(.destination == "/") | .source')
+SNAPSHOT_ID=$(basename "$(dirname "$MERGED_PATH")")
+
+echo "Monitor path: $MERGED_PATH"
+echo "Snapshot ID: $SNAPSHOT_ID"
+```
+
+### Method 2: Batch Discovery for All Containers
+```bash
+#!/bin/bash
+# Get all container monitoring paths
+
+crictl ps --format table | tail -n +2 | while read line; do
+    CONTAINER_ID=$(echo "$line" | awk '{print $1}')
+    CONTAINER_NAME=$(echo "$line" | awk '{print $6}')
+
     MERGED_PATH=$(crictl inspect "$CONTAINER_ID" 2>/dev/null | jq -r '.info.runtimeSpec.mounts[]? | select(.destination == "/") | .source' 2>/dev/null)
 
     if [ -n "$MERGED_PATH" ] && [ "$MERGED_PATH" != "null" ]; then
         SNAPSHOT_ID=$(basename "$(dirname "$MERGED_PATH")")
-        echo "$CONTAINER_NAME | $CONTAINER_ID | $SNAPSHOT_ID | $MERGED_PATH"
+        echo "Container: $CONTAINER_NAME -> Monitor: $MERGED_PATH"
     fi
 done
 ```
 
-#### Method 6: Kubernetes Pod Integration
+### Method 3: Direct Path Extraction
 ```bash
-# Get snapshot ID for containers in a specific Kubernetes pod
-POD_NAME="nginx-deployment-abc123"
-NAMESPACE="default"
-
-# Get container IDs from the pod
-kubectl describe pod "$POD_NAME" -n "$NAMESPACE" | grep "Container ID" | while read line; do
-    CONTAINER_ID=$(echo "$line" | cut -d'/' -f3)
-
-    # Get snapshot ID
-    MERGED_PATH=$(crictl inspect "$CONTAINER_ID" | jq -r '.info.runtimeSpec.mounts[] | select(.destination == "/") | .source')
-    SNAPSHOT_ID=$(basename "$(dirname "$MERGED_PATH")")
-
-    echo "Pod: $POD_NAME, Container ID: $CONTAINER_ID, Snapshot ID: $SNAPSHOT_ID"
-done
+# If you already have the full path, extract snapshot ID
+FULL_PATH="/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/abc123def456/fs"
+SNAPSHOT_ID=$(echo "$FULL_PATH" | cut -d'/' -f11)
+echo "Snapshot ID: $SNAPSHOT_ID"
 ```
 
-#### Understanding Snapshot ID Format
-```bash
-# Typical snapshot ID examples:
-abc123def456789                    # Standard format (hexadecimal)
-1a2b3c4d5e6f7890abcdef             # Long format
-nginx-app-12345-67890              # Some may include descriptive parts
-```
+## Quick Setup Script
 
-#### Key Points About Snapshot IDs:
-- **Unique per container instance** - Each container gets its own snapshot ID
-- **Changes on restart** - New snapshot ID assigned when container restarts
-- **Not the container ID** - Different from Docker/containerd container ID
-- **Used for filesystem isolation** - Links to specific overlay filesystem layers
-- **Required for precise monitoring** - Essential for targeting specific container filesystems
-
-### Monitor Persistent Volumes from Host
-
-**Container volumes (persistent data):**
-```
-/var/lib/rancher/k3s/storage/
-/var/lib/kubelet/pods/<pod-uid>/volumes/
-```
-
-## Alternative Monitoring Options
-
-### Option 1: Monitor from Inside the Container
-
-If your FIM agent runs inside the container, monitor these paths:
-
-```
-/                 # Root filesystem of the container
-/app              # Common application directory
-/etc              # Configuration files
-/var/log          # Application logs
-/usr/local/bin    # Custom binaries
-/opt              # Optional software packages
-```
-
-**Pros:**
-- Direct access to container filesystem
-- No path translation needed
-- Sees files as the application sees them
-
-**Cons:**
-- Requires agent deployment in each container
-- Agent can be compromised if container is compromised
-
-### Option 2: Using Kubernetes Volume Mounts
-
-Mount host directories into containers for monitoring:
-
-```yaml
-apiVersion: v1
-kind: Pod
-spec:
-  containers:
-  - name: app
-    image: myapp:latest
-    volumeMounts:
-    - name: host-fim-data
-      mountPath: /fim-monitor
-      readOnly: true
-  volumes:
-  - name: host-fim-data
-    hostPath:
-      path: /opt/fim/container-data
-      type: Directory
-```
-
-## Practical Commands
-
-### Accessing Container Files
-
-**Use kubectl exec:**
-```bash
-kubectl exec -it <pod-name> -- /bin/bash
-kubectl exec -it <pod-name> -- ls -la /app
-```
-
-**Use crictl (containerd CLI):**
-```bash
-crictl exec -it <container-id> /bin/bash
-crictl exec -it <container-id> ls -la /
-```
-
-### Finding Container Information
-
-**List running containers:**
-```bash
-crictl ps
-```
-
-**Get container details:**
-```bash
-crictl inspect <container-id>
-```
-
-**Find container's filesystem:**
-```bash
-crictl inspect <container-id> | grep -i merged
-```
-
-### FIM Implementation Script
+**Note:** This script should be run regularly or triggered by container lifecycle events since snapshot-ids change on restart.
 
 ```bash
 #!/bin/bash
-# Get container's filesystem path for monitoring
+# Setup FIM monitoring for K3s containers
 
-CONTAINER_NAME="$1"
-if [ -z "$CONTAINER_NAME" ]; then
-    echo "Usage: $0 <container-name>"
-    exit 1
-fi
+echo "=== K3s Container FIM Setup ==="
+echo
 
-# Get container ID
-CONTAINER_ID=$(crictl ps --name "$CONTAINER_NAME" -q)
-if [ -z "$CONTAINER_ID" ]; then
-    echo "Container '$CONTAINER_NAME' not found"
-    exit 1
-fi
+echo "1. K3s System Configuration:"
+echo "   Monitor: /etc/rancher/k3s/"
+echo
 
-# Get merged filesystem path
-MERGED_PATH=$(crictl inspect "$CONTAINER_ID" | jq -r '.info.runtimeSpec.mounts[] | select(.destination == "/") | .source')
+echo "2. Container Filesystems:"
+crictl ps --format table | tail -n +2 | while read line; do
+    CONTAINER_ID=$(echo "$line" | awk '{print $1}')
+    CONTAINER_NAME=$(echo "$line" | awk '{print $6}')
 
-echo "Container: $CONTAINER_NAME"
-echo "Container ID: $CONTAINER_ID"
-echo "Monitor path: $MERGED_PATH"
+    MERGED_PATH=$(crictl inspect "$CONTAINER_ID" 2>/dev/null | jq -r '.info.runtimeSpec.mounts[]? | select(.destination == "/") | .source' 2>/dev/null)
 
-# Verify path exists
-if [ -d "$MERGED_PATH" ]; then
-    echo "✓ Path exists and is accessible"
-    echo "Sample files:"
-    ls -la "$MERGED_PATH" | head -10
-else
-    echo "✗ Path not found or not accessible"
-fi
+    if [ -n "$MERGED_PATH" ] && [ "$MERGED_PATH" != "null" ]; then
+        echo "   Container: $CONTAINER_NAME"
+        echo "   Monitor: $MERGED_PATH"
+        echo
+    fi
+done
 ```
 
-## Security Considerations
+## Key Commands
 
-- Monitor from host to avoid agent compromise
-- Use read-only access where possible
-- Monitor both container files and host paths
-- Implement alerting for unauthorized changes
-- Regular baseline updates for legitimate changes
+```bash
+# List running containers
+crictl ps
 
-## Troubleshooting
+# Get container filesystem path
+crictl inspect <container-id> | jq -r '.info.runtimeSpec.mounts[] | select(.destination == "/") | .source'
 
-**Container not found:**
-- Verify container is running: `crictl ps`
-- Check container name spelling
-- Ensure proper permissions to access crictl
+# Verify path exists
+ls -la /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/<snapshot-id>/fs
+```
 
-**Path not accessible:**
-- Verify running as root or appropriate user
-- Check SELinux/AppArmor policies
-- Ensure containerd is running properly
+## Automating Path Updates
+
+Since snapshot-ids change on restart, consider these automation approaches:
+
+### Option 1: Periodic Discovery
+```bash
+# Run every 5 minutes to catch container restarts
+*/5 * * * * /usr/local/bin/update-fim-paths.sh
+```
+
+### Option 2: Container Event Monitoring
+```bash
+# Watch for container start events
+crictl events --follow | grep "container.*started" | while read event; do
+    echo "Container started, updating FIM paths..."
+    /usr/local/bin/update-fim-paths.sh
+done
+```
+
+### Option 3: Kubernetes Event Watching
+```bash
+# Watch for pod events
+kubectl get events --watch --field-selector involvedObject.kind=Pod | while read event; do
+    if [[ "$event" == *"Started"* ]]; then
+        echo "Pod started, updating FIM paths..."
+        /usr/local/bin/update-fim-paths.sh
+    fi
+done
+```

@@ -1,4 +1,4 @@
-# K3s Container File Monitoring - Full Malware Detection
+# K3s Container File Monitoring
 
 ## Required Monitoring Paths
 

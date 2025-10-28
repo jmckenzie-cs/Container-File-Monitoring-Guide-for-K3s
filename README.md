@@ -12,8 +12,13 @@ These paths are **essential** for detecting security incidents and must be monit
 
 **Container Overlay Filesystems (Application Files):**
 ```bash
-# Primary target: Container's live filesystem
+# Primary target: Container's live filesystem (TEMPLATE)
 /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/<snapshot-id>/fs
+
+# ACTUAL EXAMPLES (replace <snapshot-id> with real values):
+/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/abc123def456789/fs
+/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/1a2b3c4d5e6f/fs
+/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/nginx-prod-67890/fs
 ```
 
 **Why Required:**
@@ -21,6 +26,7 @@ These paths are **essential** for detecting security incidents and must be monit
 - Detects malware injection, backdoors, and unauthorized modifications
 - Shows real-time changes to running applications
 - Critical for compliance and incident response
+- **Note:** You must use the [snapshot ID discovery methods](#how-to-get-snapshot-ids) below to get actual snapshot IDs for your running containers
 
 **K3s System Configuration:**
 ```
@@ -205,6 +211,112 @@ crictl inspect $CONTAINER_ID | grep -A1 -B1 "MergedDir"
 ```
 /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/<snapshot-id>/fs
 ```
+
+### How to Get Snapshot IDs
+
+The `<snapshot-id>` is a unique identifier for each container's filesystem snapshot. Here are multiple methods to extract it:
+
+#### Method 1: Extract from Merged Path (Recommended)
+```bash
+# Get container name/ID
+CONTAINER_NAME="nginx-app"
+CONTAINER_ID=$(crictl ps --name "$CONTAINER_NAME" -q)
+
+# Get full merged path
+MERGED_PATH=$(crictl inspect "$CONTAINER_ID" | jq -r '.info.runtimeSpec.mounts[] | select(.destination == "/") | .source')
+
+# Extract just the snapshot ID
+SNAPSHOT_ID=$(basename "$(dirname "$MERGED_PATH")")
+
+echo "Container: $CONTAINER_NAME"
+echo "Full path: $MERGED_PATH"
+echo "Snapshot ID: $SNAPSHOT_ID"
+```
+
+#### Method 2: Using Path Parsing
+```bash
+# Parse snapshot ID from full path using parameter expansion
+MERGED_PATH="/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/abc123def456/fs"
+SNAPSHOT_ID="${MERGED_PATH%/fs}"      # Remove /fs suffix
+SNAPSHOT_ID="${SNAPSHOT_ID##*/}"      # Get last part after final /
+
+echo "Snapshot ID: $SNAPSHOT_ID"
+```
+
+#### Method 3: Direct containerd Query
+```bash
+# List all snapshots with containerd
+ctr -n k8s.io snapshot ls
+
+# Find snapshot for specific container
+CONTAINER_ID=$(crictl ps --name nginx-app -q)
+ctr -n k8s.io snapshot ls | grep "$CONTAINER_ID"
+```
+
+#### Method 4: Filesystem Discovery
+```bash
+# List all snapshot directories
+ls -la /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/
+
+# Find snapshots modified recently (active containers)
+find /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/ -maxdepth 1 -type d -mmin -60
+```
+
+#### Method 5: Batch Discovery Script
+```bash
+#!/bin/bash
+# Get snapshot IDs for all running containers
+
+echo "Container Name | Container ID | Snapshot ID | Full Path"
+echo "============== | ============ | =========== | ========="
+
+# Loop through all running containers
+crictl ps --format table | tail -n +2 | while read line; do
+    CONTAINER_ID=$(echo "$line" | awk '{print $1}')
+    CONTAINER_NAME=$(echo "$line" | awk '{print $6}')
+
+    # Get merged path
+    MERGED_PATH=$(crictl inspect "$CONTAINER_ID" 2>/dev/null | jq -r '.info.runtimeSpec.mounts[]? | select(.destination == "/") | .source' 2>/dev/null)
+
+    if [ -n "$MERGED_PATH" ] && [ "$MERGED_PATH" != "null" ]; then
+        SNAPSHOT_ID=$(basename "$(dirname "$MERGED_PATH")")
+        echo "$CONTAINER_NAME | $CONTAINER_ID | $SNAPSHOT_ID | $MERGED_PATH"
+    fi
+done
+```
+
+#### Method 6: Kubernetes Pod Integration
+```bash
+# Get snapshot ID for containers in a specific Kubernetes pod
+POD_NAME="nginx-deployment-abc123"
+NAMESPACE="default"
+
+# Get container IDs from the pod
+kubectl describe pod "$POD_NAME" -n "$NAMESPACE" | grep "Container ID" | while read line; do
+    CONTAINER_ID=$(echo "$line" | cut -d'/' -f3)
+
+    # Get snapshot ID
+    MERGED_PATH=$(crictl inspect "$CONTAINER_ID" | jq -r '.info.runtimeSpec.mounts[] | select(.destination == "/") | .source')
+    SNAPSHOT_ID=$(basename "$(dirname "$MERGED_PATH")")
+
+    echo "Pod: $POD_NAME, Container ID: $CONTAINER_ID, Snapshot ID: $SNAPSHOT_ID"
+done
+```
+
+#### Understanding Snapshot ID Format
+```bash
+# Typical snapshot ID examples:
+abc123def456789                    # Standard format (hexadecimal)
+1a2b3c4d5e6f7890abcdef             # Long format
+nginx-app-12345-67890              # Some may include descriptive parts
+```
+
+#### Key Points About Snapshot IDs:
+- **Unique per container instance** - Each container gets its own snapshot ID
+- **Changes on restart** - New snapshot ID assigned when container restarts
+- **Not the container ID** - Different from Docker/containerd container ID
+- **Used for filesystem isolation** - Links to specific overlay filesystem layers
+- **Required for precise monitoring** - Essential for targeting specific container filesystems
 
 ### Monitor Persistent Volumes from Host
 

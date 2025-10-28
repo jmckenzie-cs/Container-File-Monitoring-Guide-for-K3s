@@ -6,11 +6,16 @@ Monitor these two critical paths for security compliance:
 
 ### 1. Container Live Filesystems
 ```bash
+# SPECIFIC CONTAINER (requires snapshot ID discovery)
 /var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/<snapshot-id>/fs
+
+# ALL CONTAINERS (no snapshot ID needed) - RECOMMENDED FOR BULK MONITORING
+/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/
 ```
 - Contains all executable files and application code
 - Detects malware injection and unauthorized modifications
-- **⚠️ Changes on restart** - requires dynamic discovery
+- **✅ Bulk monitoring** - Monitor parent directory to cover all containers
+- **⚠️ Individual paths change on restart** - but parent directory is stable
 
 ### 2. K3s System Configuration
 ```bash
@@ -201,6 +206,86 @@ find /var/lib/rancher/k3s/storage/ -type f -mtime -1 | head -10
 **Stable paths provide operational convenience but sacrifice malware detection capability.** Most sophisticated malware targets executable code and system files that reside in the container overlay filesystem, not in persistent data volumes.
 
 The choice between stability and security depends on your threat model and existing security controls.
+
+## Bulk Monitoring Strategy (All Containers)
+
+### Monitor Parent Directory - No Snapshot IDs Required
+```bash
+# SIMPLE: Monitor all container filesystems at once
+/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/
+
+# PLUS: System configuration
+/etc/rancher/k3s/
+```
+
+**Benefits:**
+- ✅ **No snapshot ID management** - completely stable path
+- ✅ **Catches all containers** - existing and new ones automatically
+- ✅ **No dynamic discovery scripts** needed
+- ✅ **Full malware detection** - includes all executable code
+- ✅ **Survives restarts** - new snapshots automatically included
+
+**Considerations:**
+- 🔍 **More data volume** - monitoring all containers vs specific ones
+- 🔍 **Broader scope** - may include test/temporary containers
+- 🔍 **Filtering needed** - may want to exclude certain container types
+
+### Recursive Monitoring Structure
+```
+/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/
+├── abc123def456/fs/          # Container 1 filesystem
+├── xyz789ghi012/fs/          # Container 2 filesystem
+├── nginx-prod-345/fs/        # Container 3 filesystem
+└── [new containers automatically included]
+```
+
+### Bulk Monitoring Script
+```bash
+#!/bin/bash
+# Verify bulk monitoring setup
+
+SNAPSHOT_DIR="/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots"
+
+echo "=== Bulk Container Monitoring Setup ==="
+echo
+echo "Monitor directory: $SNAPSHOT_DIR"
+echo "This covers ALL container filesystems automatically"
+echo
+
+if [ -d "$SNAPSHOT_DIR" ]; then
+    CONTAINER_COUNT=$(ls -1 "$SNAPSHOT_DIR" | wc -l)
+    echo "✅ Directory exists"
+    echo "📊 Currently monitoring $CONTAINER_COUNT container snapshots"
+    echo
+    echo "Active container filesystems:"
+    ls -la "$SNAPSHOT_DIR" | grep ^d | head -10
+else
+    echo "❌ Directory not found - check K3s installation"
+fi
+
+echo
+echo "Configuration:"
+echo "  FIM Monitor Path: $SNAPSHOT_DIR"
+echo "  Recursive: Yes"
+echo "  Auto-discovery: Not needed"
+```
+
+### Comparison: Individual vs Bulk Monitoring
+
+| Approach | Snapshot ID Required | Setup Complexity | Coverage | Maintenance |
+|----------|---------------------|------------------|----------|-------------|
+| **Individual Container** | ✅ Yes | High | Specific containers | Dynamic scripts needed |
+| **Bulk Directory** | ❌ No | Low | All containers | Zero maintenance |
+| **Hybrid** | ✅ Partial | Medium | Critical + bulk | Moderate |
+
+### Recommended Approach for Most Environments:
+```bash
+# BULK MONITORING (Recommended)
+/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/  # All containers
+/etc/rancher/k3s/                                                                       # K3s config
+
+# Result: Complete coverage with minimal operational overhead
+```
 
 ## How to Get Snapshot IDs
 

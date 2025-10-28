@@ -22,6 +22,8 @@ Monitor these two critical paths for security compliance:
 
 ## Alternative Stable Paths (Hardcode-Friendly)
 
+⚠️ **SECURITY WARNING**: These stable paths have **limited malware detection capability** compared to container overlay filesystems. See [Security Analysis](#security-analysis) below.
+
 If you prefer hardcoded paths that don't change on container restart, monitor these instead:
 
 ### 1. Persistent Volumes (Recommended Alternative)
@@ -94,9 +96,111 @@ done
 # List all persistent volume directories
 ls -la /var/lib/rancher/k3s/storage/
 
-# Find recently active storage
 find /var/lib/rancher/k3s/storage/ -type f -mtime -1 | head -10
 ```
+
+## Security Analysis: Malware Detection Capabilities
+
+### Container Overlay Filesystem (Dynamic Path) - BEST for Malware Detection
+```bash
+/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/<snapshot-id>/fs
+```
+
+**✅ DETECTS:**
+- **Executable modifications** - malware changing `/bin/sh`, `/usr/bin/*`, application binaries
+- **Library injection** - malicious libraries in `/lib`, `/usr/lib`
+- **System file tampering** - modifications to `/etc/passwd`, `/etc/hosts`, system configs
+- **Runtime file creation** - malware creating new executables anywhere in the filesystem
+- **Process injection artifacts** - temporary files, modified memory-mapped files
+- **Container escape attempts** - modifications to container runtime files
+
+**Why it's comprehensive:** Contains the COMPLETE filesystem view that the container sees, including all executables and system files from image layers plus any runtime changes.
+
+### Persistent Volumes (Stable Path) - LIMITED Malware Detection
+```bash
+/var/lib/rancher/k3s/storage/
+/var/lib/kubelet/pods/<pod-uid>/volumes/
+```
+
+**✅ DETECTS:**
+- **Data tampering** - malware modifying databases, user files, application data
+- **Data exfiltration artifacts** - suspicious file copies, compressed archives
+- **Persistence via data** - malware hiding in data files, configuration changes
+
+**❌ MISSES:**
+- **Executable modifications** - malware changing system binaries (most common attack)
+- **Library injection** - malicious shared libraries
+- **System configuration tampering** - `/etc` modifications
+- **Runtime executable creation** - new malicious binaries in `/tmp`, `/var/run`
+- **Process injection** - memory-based attacks, temporary executable files
+
+**Why limited:** Persistent volumes typically contain only APPLICATION DATA, not executable code or system files that malware commonly targets.
+
+### Host Bind Mounts (Stable Path) - DEPENDS on What's Mounted
+
+**If only data directories are mounted:**
+- Same limitations as persistent volumes above
+- Misses most executable-targeting malware
+
+**If executable directories are mounted:**
+```bash
+/opt/app-bin/     # Application executables mounted from host
+/etc/app-config/  # Application configuration mounted from host
+```
+- **✅ DETECTS:** Malware modifying mounted executables/configs
+- **❌ MISSES:** Malware targeting container system files (`/bin`, `/usr/bin`, `/lib`)
+
+### Container Runtime Directories - POOR for Malware Detection
+```bash
+/var/lib/rancher/k3s/agent/containerd/io.containerd.grpc.v1.cri/containers/<container-id>/
+```
+
+**❌ MISSES MOST MALWARE:**
+- Contains only container metadata and configuration
+- Does not include the actual filesystem where malware operates
+- Useful for forensics but not real-time malware detection
+
+## Security Recommendations
+
+### For Maximum Security (Compliance/High-Risk Environments):
+```bash
+# REQUIRED: Full malware detection capability
+/var/lib/rancher/k3s/agent/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/<snapshot-id>/fs
+
+# PLUS: Stable configuration monitoring
+/etc/rancher/k3s/
+
+# Accept the complexity of dynamic path management for comprehensive coverage
+```
+
+### For Balanced Approach (Operational Convenience vs Security):
+```bash
+# STABLE: System and persistent data
+/etc/rancher/k3s/
+/var/lib/rancher/k3s/storage/
+
+# DYNAMIC: Critical application containers (high-value targets)
+/var/lib/rancher/.../snapshots/<snapshot-id>/fs  # Only for critical workloads
+
+# Use automation to manage dynamic paths for critical containers only
+```
+
+### For Data-Focused Monitoring (Limited Security):
+```bash
+# STABLE ONLY: Configuration and data tampering detection
+/etc/rancher/k3s/
+/var/lib/rancher/k3s/storage/
+/var/lib/kubelet/pods/<pod-uid>/volumes/
+
+# WARNING: Will miss most executable-targeting malware
+# Suitable only for environments with other malware protection layers
+```
+
+## Key Takeaway
+
+**Stable paths provide operational convenience but sacrifice malware detection capability.** Most sophisticated malware targets executable code and system files that reside in the container overlay filesystem, not in persistent data volumes.
+
+The choice between stability and security depends on your threat model and existing security controls.
 
 ## How to Get Snapshot IDs
 
